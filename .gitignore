@@ -60,6 +60,8 @@ Desktop.ini
 # Loại bỏ các file dữ liệu nặng (CSV, Excel, H5, v.v.)
 data/raw/
 data/processed/
+*csa_data*/
+*.parquet
 *.csv
 *.tsv
 *.xlsx
@@ -77,3 +79,7 @@ models/
 ### Logs ###
 logs/
 *.log
+
+### Experiment results ###
+*exp_result*/
+*bruteforce*/
