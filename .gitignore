@@ -54,6 +54,7 @@ venv.bak/
 .DS_Store?
 ._*
 Thumbs.db
+data
 Desktop.ini
 
 ### Data & Models (Dữ liệu nặng không nên đẩy lên Git) ###
