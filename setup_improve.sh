@@ -7,18 +7,6 @@ echo "Model path: $model_path"
 model_name=$(echo "$model_path" | awk -F '/' '{print $NF}')
 echo "Model name: $model_name"
 
-# Download data (if needed)
-data_dir="csa_data"
-if [ ! -d $PWD/$data_dir/ ]; then
-    echo "Download CSA data"
-    source download_csa.sh
-else
-    echo "CSA data folder already exists"
-fi
-
-# # Env var IMPROVE_DATA_DIR
-# export IMPROVE_DATA_DIR="./$data_dir/"
-
 # Clone IMPROVE lib (if needed) and checkout the branch/tag
 cd ../
 improve_lib_path=$PWD/IMPROVE
@@ -33,7 +21,17 @@ cd IMPROVE
 git checkout $improve_branch
 cd ../$model_name
 
-# Env var PYTHOPATH
+# Download official IMPROVE CSA benchmark data if needed.
+data_dir="$PWD/csa_data/raw_data"
+if [ ! -d "$data_dir/x_data" ] || [ ! -d "$data_dir/y_data" ] || [ ! -d "$data_dir/splits" ]; then
+    echo "Download official IMPROVE CSA benchmark data"
+    bash "$improve_lib_path/benchmark_data/drug_response_prediction/scripts/get-benchmarks" "$data_dir"
+else
+    echo "Official IMPROVE CSA data folder already exists"
+fi
+
+# Env vars
+export IMPROVE_DATA_DIR="$data_dir"
 export PYTHONPATH=$PYTHONPATH:$improve_lib_path
 
 echo
