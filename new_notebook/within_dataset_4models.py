@@ -37,6 +37,55 @@ MODEL_PREPROCESS = {
     "graphdrp": "official-style drug molecular graph from SMILES + gene expression",
     "simple_linear_nn": "official-style PyTorch MLP on gene expression + Mordred drug descriptors",
 }
+GRAPHDRP_ALLOWABLE_ATOMS = [
+    "C",
+    "N",
+    "O",
+    "S",
+    "F",
+    "Si",
+    "P",
+    "Cl",
+    "Br",
+    "Mg",
+    "Na",
+    "Ca",
+    "Fe",
+    "As",
+    "Al",
+    "I",
+    "B",
+    "V",
+    "K",
+    "Tl",
+    "Yb",
+    "Sb",
+    "Sn",
+    "Ag",
+    "Pd",
+    "Co",
+    "Se",
+    "Ti",
+    "Zn",
+    "H",
+    "Li",
+    "Ge",
+    "Cu",
+    "Au",
+    "Ni",
+    "Cd",
+    "In",
+    "Mn",
+    "Zr",
+    "Cr",
+    "Pt",
+    "Hg",
+    "Pb",
+    "Unknown",
+]
+GRAPHDRP_ALLOWABLE_DEGREES = list(range(11))
+GRAPHDRP_ALLOWABLE_TOTAL_HS = list(range(11))
+GRAPHDRP_ALLOWABLE_IMPLICIT_VALENCES = list(range(11))
 
 
 @dataclass
@@ -748,55 +797,6 @@ def run_graphdrp_model(
     smiles_col = "canSMILES" if "canSMILES" in smiles.columns else "smiles"
     smiles_dict = dict(zip(smiles[DRUG_ID_COL].astype(str), smiles[smiles_col].astype(str)))
 
-    # Same atom vocabulary used by GraphDRP's rdkit_utils.atom_features.
-    # Atoms outside this set are mapped to the final "Unknown" bucket.
-    allowable_atoms = [
-        "C",
-        "N",
-        "O",
-        "S",
-        "F",
-        "Si",
-        "P",
-        "Cl",
-        "Br",
-        "Mg",
-        "Na",
-        "Ca",
-        "Fe",
-        "As",
-        "Al",
-        "I",
-        "B",
-        "V",
-        "K",
-        "Tl",
-        "Yb",
-        "Sb",
-        "Sn",
-        "Ag",
-        "Pd",
-        "Co",
-        "Se",
-        "Ti",
-        "Zn",
-        "H",
-        "Li",
-        "Ge",
-        "Cu",
-        "Au",
-        "Ni",
-        "Cd",
-        "In",
-        "Mn",
-        "Zr",
-        "Cr",
-        "Pt",
-        "Hg",
-        "Pb",
-        "Unknown",
-    ]
-
     def one_hot_unknown(value, choices):
         if value not in choices:
             value = choices[-1]
@@ -809,10 +809,10 @@ def run_graphdrp_model(
 
     def atom_features(atom):
         features = np.array(
-            one_hot_unknown(atom.GetSymbol(), allowable_atoms)
-            + one_hot_strict(atom.GetDegree(), list(range(11)))
-            + one_hot_unknown(atom.GetTotalNumHs(), list(range(11)))
-            + one_hot_unknown(atom.GetImplicitValence(), list(range(11)))
+            one_hot_unknown(atom.GetSymbol(), GRAPHDRP_ALLOWABLE_ATOMS)
+            + one_hot_strict(atom.GetDegree(), GRAPHDRP_ALLOWABLE_DEGREES)
+            + one_hot_unknown(atom.GetTotalNumHs(), GRAPHDRP_ALLOWABLE_TOTAL_HS)
+            + one_hot_unknown(atom.GetImplicitValence(), GRAPHDRP_ALLOWABLE_IMPLICIT_VALENCES)
             + [float(atom.GetIsAromatic())]
         ).astype(np.float32)
         return features / features.sum()
