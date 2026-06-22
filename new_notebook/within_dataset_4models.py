@@ -174,27 +174,32 @@ def read_gene_symbols(cfg: BenchmarkConfig) -> Dict[str, str]:
     return meta.iloc[1].dropna().astype(str).to_dict()
 
 
-def get_lincs_symbol_list() -> Optional[List[str]]:
+def get_lincs_symbol_list(required: bool = False) -> Optional[List[str]]:
     try:
         from improvelib.statics import LINCS_SYMBOL
 
         return list(LINCS_SYMBOL)
-    except ImportError:
+    except ImportError as exc:
+        if required:
+            raise ImportError(
+                "cfg.use_lincs_symbol_genes=True requires improvelib.statics.LINCS_SYMBOL. "
+                "Install the official JDACS4C-IMPROVE improvelib package/repo, then restart the kernel."
+            ) from exc
         return None
 
 
 def select_gene_columns(cfg: BenchmarkConfig, gene_expression: pd.DataFrame, train_cell_ids: Iterable[str]) -> List[str]:
     if cfg.use_lincs_symbol_genes:
-        lincs_symbols = get_lincs_symbol_list()
-        if lincs_symbols:
-            ens_to_symbol = read_gene_symbols(cfg)
-            symbol_to_ens = {}
-            for ens_id, symbol in ens_to_symbol.items():
-                if ens_id in gene_expression.columns and symbol not in symbol_to_ens:
-                    symbol_to_ens[symbol] = ens_id
-            lincs_cols = [symbol_to_ens[symbol] for symbol in lincs_symbols if symbol in symbol_to_ens]
-            if lincs_cols:
-                return lincs_cols
+        lincs_symbols = get_lincs_symbol_list(required=True)
+        ens_to_symbol = read_gene_symbols(cfg)
+        symbol_to_ens = {}
+        for ens_id, symbol in ens_to_symbol.items():
+            if ens_id in gene_expression.columns and symbol not in symbol_to_ens:
+                symbol_to_ens[symbol] = ens_id
+        lincs_cols = [symbol_to_ens[symbol] for symbol in lincs_symbols if symbol in symbol_to_ens]
+        if not lincs_cols:
+            raise ValueError("LINCS_SYMBOL was loaded from improvelib, but none mapped to gene expression columns.")
+        return lincs_cols
 
     return top_variance_columns(gene_expression, train_cell_ids, cfg.top_ge_features)
 
@@ -712,6 +717,14 @@ def run_graphdrp_model(
 ) -> List[Dict[str, object]]:
     torch, nn, F, Chem, Data, DataLoader, GINConv, global_add_pool = _require_graphdrp_deps()
 
+    import random
+
+    random.seed(cfg.random_state)
+    np.random.seed(cfg.random_state)
+    torch.manual_seed(cfg.random_state)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(cfg.random_state)
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     rng = np.random.default_rng(cfg.random_state)
 
@@ -735,6 +748,8 @@ def run_graphdrp_model(
     smiles_col = "canSMILES" if "canSMILES" in smiles.columns else "smiles"
     smiles_dict = dict(zip(smiles[DRUG_ID_COL].astype(str), smiles[smiles_col].astype(str)))
 
+    # Same atom vocabulary used by GraphDRP's rdkit_utils.atom_features.
+    # Atoms outside this set are mapped to the final "Unknown" bucket.
     allowable_atoms = [
         "C",
         "N",
@@ -787,10 +802,15 @@ def run_graphdrp_model(
             value = choices[-1]
         return [float(value == choice) for choice in choices]
 
+    def one_hot_strict(value, choices):
+        if value not in choices:
+            raise ValueError(f"input {value} not in allowable set {choices}")
+        return [float(value == choice) for choice in choices]
+
     def atom_features(atom):
         features = np.array(
             one_hot_unknown(atom.GetSymbol(), allowable_atoms)
-            + one_hot_unknown(atom.GetDegree(), list(range(11)))
+            + one_hot_strict(atom.GetDegree(), list(range(11)))
             + one_hot_unknown(atom.GetTotalNumHs(), list(range(11)))
             + one_hot_unknown(atom.GetImplicitValence(), list(range(11)))
             + [float(atom.GetIsAromatic())]
@@ -804,17 +824,20 @@ def run_graphdrp_model(
         mol = Chem.MolFromSmiles(smi)
         if mol is None or mol.GetNumAtoms() == 0:
             return None
-        x = torch.tensor([atom_features(atom) for atom in mol.GetAtoms()], dtype=torch.float)
+        try:
+            atom_feature_matrix = np.asarray([atom_features(atom) for atom in mol.GetAtoms()], dtype=np.float32)
+        except ValueError:
+            return None
+        x = torch.tensor(atom_feature_matrix, dtype=torch.float)
         edges = []
         for bond in mol.GetBonds():
             i = bond.GetBeginAtomIdx()
             j = bond.GetEndAtomIdx()
             edges.append((i, j))
             edges.append((j, i))
-        if edges:
-            edge_index = torch.tensor(edges, dtype=torch.long).t().contiguous()
-        else:
-            edge_index = torch.zeros((2, 0), dtype=torch.long)
+        if not edges:
+            return None
+        edge_index = torch.tensor(edges, dtype=torch.long).t().contiguous()
         return {"x": x, "edge_index": edge_index}
 
     graph_cache = {drug_id: mol_to_graph(drug_id) for drug_id in all_drugs}
@@ -950,14 +973,12 @@ def run_graphdrp_model(
             optimizer.zero_grad()
             pred = model(batch)
             loss = loss_fn(pred, batch.y.view(-1))
-            if torch.isfinite(loss):
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 2.0)
-                optimizer.step()
+            loss.backward()
+            optimizer.step()
         yv, pv = eval_loader(val_loader)
-        val_rmse = float(np.sqrt(mean_squared_error(yv, pv)))
-        if val_rmse < best_val:
-            best_val = val_rmse
+        val_mse = float(mean_squared_error(yv, pv))
+        if val_mse < best_val:
+            best_val = val_mse
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
             bad_epochs = 0
         else:
