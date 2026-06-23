@@ -69,6 +69,7 @@ data/processed/
 *.xlsx
 *.gz
 *.zip
+*.png
 
 # Loại bỏ các file lưu model (Weights, checkpoints)
 models/
